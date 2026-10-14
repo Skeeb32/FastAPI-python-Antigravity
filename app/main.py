@@ -5,7 +5,8 @@ Configures FastAPI app, CORS middleware, custom exception handlers, and mounts A
 
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -53,21 +54,29 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Custom 422 Validation Error Handler for transparent debugging
+    # Custom 422 Validation Error Handler with serializable context formatting
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        # Convert any non-serializable objects (such as Exception instances in ctx) to strings
+        safe_errors = []
+        for err in exc.errors():
+            item = dict(err)
+            if "ctx" in item and isinstance(item["ctx"], dict):
+                item["ctx"] = {k: str(v) for k, v in item["ctx"].items()}
+            safe_errors.append(item)
+
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,
             content={
                 "status": "failed",
                 "message": "Pydantic Request Body validation failed. Check schema fields and types.",
-                "errors": exc.errors(),
-                "body_received": exc.body,
+                "errors": safe_errors,
             },
         )
 
-    # Mount routers
+    # Mount routers at root and API v1 prefix
     app.include_router(health_router)
+    app.include_router(health_router, prefix=settings.API_V1_STR)
     app.include_router(telemetry_router, prefix=settings.API_V1_STR)
     app.include_router(orders_router, prefix=settings.API_V1_STR)
     app.include_router(datasets_router, prefix=settings.API_V1_STR)
